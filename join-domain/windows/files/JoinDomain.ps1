@@ -12,15 +12,20 @@ Param(
         #OU to place the computer object
     $TargetOU = "null",
 
-    [parameter(Mandatory = $true)]
+    [parameter(Mandatory = $false)]
     [String]
         #Key used to decrypt the join domain key
     $Key,
 
-    [parameter(Mandatory = $true)]
+    [parameter(Mandatory = $false)]
     [String]
         #Encrypted join domain password
     $EncryptedPassword,
+
+    [parameter(Mandatory = $false)]
+    [String]
+        #Auto-rotate password generated from Vault
+    $RotatedPassword,
 
     [parameter(Mandatory = $true)]
     [String]
@@ -583,14 +588,28 @@ Function xAdd-Computer
 $DomainJoinStatus = Get-DomainJoinStatus -DomainFQDN $DomainName
 if($DomainJoinStatus -eq $null)
 {
+    if(($Key -eq [String]::Empty -or $EncryptedPassword -eq [String]::Empty) -and $RotatedPassword -eq [String]::Empty)
+    {
+        Throw "Formula requires an encrypted password with decryption key or an auto-rotated password from Vault to join the domain."
+    } 
+    
     #If the object is found, remove it, else add the computer to the domain.
-    #Create the credential
-    $AesObject = New-Object System.Security.Cryptography.AesCryptoServiceProvider
-    $AesObject.IV = New-Object Byte[]($AesObject.IV.Length)
-    $AesObject.Key = [System.Convert]::FromBase64String($Key)
-    $EncryptedStringBytes = [System.Convert]::FromBase64String($EncryptedPassword)
-    $ReEncryptedPassword = ConvertTo-SecureString -String "$([System.Text.UnicodeEncoding]::Unicode.GetString(($AesObject.CreateDecryptor()).TransformFinalBlock($EncryptedStringBytes, 0, $EncryptedStringBytes.Length)))" -AsPlainText -Force
-    $cred = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $UserName, $ReEncryptedPassword
+    #Create the credential from the auto-rotate password when it's provided to the formula
+    if($RotatedPassword)
+    {
+        $SecPassword = ConvertTo-SecureString -String $RotatedPassword -AsPlainText -Force
+        $cred = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $UserName, $SecPassword
+    }
+    else
+    {
+        #Create the credential from key and encrypted password when they're provided to the formula
+        $AesObject = New-Object System.Security.Cryptography.AesCryptoServiceProvider
+        $AesObject.IV = New-Object Byte[]($AesObject.IV.Length)
+        $AesObject.Key = [System.Convert]::FromBase64String($Key)
+        $EncryptedStringBytes = [System.Convert]::FromBase64String($EncryptedPassword)
+        $ReEncryptedPassword = ConvertTo-SecureString -String "$([System.Text.UnicodeEncoding]::Unicode.GetString(($AesObject.CreateDecryptor()).TransformFinalBlock($EncryptedStringBytes, 0, $EncryptedStringBytes.Length)))" -AsPlainText -Force
+        $cred = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $UserName, $ReEncryptedPassword
+    }
 
     #Create the ldap connection
     $Ldap = Get-LdapConnection -LdapServer:$DomainName -Credential:$cred
@@ -622,10 +641,10 @@ if($DomainJoinStatus -eq $null)
 
 }
 elseif($DomainJoinStatus -eq $DomainName)
-    {
-        Write-Host "changed=no comment=`"System is already joined to the correct domain [$DomainName].`" domain=$DomainName"
-    }
+{
+    Write-Host "changed=no comment=`"System is already joined to the correct domain [$DomainName].`" domain=$DomainName"
+}
 else
-    {
-        Throw "System is joined to another domain [$DomainJoinStatus]. To join a different domain, first remove it from the current domain."
-    }
+{
+    Throw "System is joined to another domain [$DomainJoinStatus]. To join a different domain, first remove it from the current domain."
+}

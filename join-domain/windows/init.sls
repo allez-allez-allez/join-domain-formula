@@ -6,8 +6,12 @@ join standalone system to domain:
     - args: >-
         -DomainName "{{ join_domain.dns_name }}"
         -TargetOU "{{ join_domain.oupath }}"
+        {% if join_domain.get("rotated_password","") %}
+        -RotatedPassword "{{ join_domain.rotated_password }}"
+        {% else %}
         -Key "{{ join_domain.key }}"
         -EncryptedPassword "{{ join_domain.encrypted_password }}"
+        {% endif %}
         -UserName "{{ join_domain.username }}"
         -Tries {{ join_domain.tries }}
         -ErrorAction Stop
